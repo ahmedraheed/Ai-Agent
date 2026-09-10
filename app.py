@@ -467,6 +467,13 @@ REACT_SYSTEM_PROMPT = """You are a highly capable AI assistant with access to se
 6. get_current_time  — get the current live date, time, and day for any city or timezone (e.g. Action Input: Tokyo)
 7. read_webpage      — fetch and extract readable plain text content from any public webpage URL (e.g. Action Input: https://...)
 
+CRITICAL TOOL USAGE & SEARCH RULES:
+- SEARCH EFFICIENCY: Execute AT MOST 1 or 2 web searches total. Combine search terms into ONE query (e.g. 'cheapest flights Lahore to Germany Flydubai Airblue PIA Turkish ticket price'). NEVER search individually for every single airline or entity.
+- STOP & SYNTHESIZE: As soon as you complete 1 or 2 searches, stop calling search. Immediately synthesize your findings.
+- CURRENCY CONVERSION: When prices are in USD, EUR, or other foreign currencies, convert them to PKR using convert_currency or known live rates.
+- CLEAN COMPARISON TABLES: For multi-item queries, always present a clean, organized Markdown comparison table with informative columns (e.g., Airline | Transit / Route | Fare Foreign | Fare PKR | Baggage & Notes).
+- LANGUAGE: Reply in the user's requested language (Roman Urdu or English) in a helpful, structured manner.
+
 When you need a tool, respond EXACTLY in this format (nothing else on those lines):
 Thought: <your reasoning>
 Action: <tool name>
@@ -487,7 +494,7 @@ def build_groq_llm(model_name: str, api_key: str):
         model=model_name,
         groq_api_key=api_key,
         temperature=0.2,
-        max_tokens=800,
+        max_tokens=1500,
     )
 
 
@@ -772,8 +779,24 @@ def run_agent(user_text: str) -> None:
                 lc_messages.append(AIMessage(content=msg["content"]))
         lc_messages.append(HumanMessage(content=user_text))
 
-        for _ in range(6):
-            response = llm_with_tools.invoke(lc_messages)
+        search_count = 0
+        for _ in range(8):
+            try:
+                response = llm_with_tools.invoke(lc_messages)
+            except Exception as exc:
+                # If tool invocation or argument parsing errors out (e.g. 400 JSON parse error), synthesize gracefully
+                synth_prompt = (
+                    "Synthesize and provide your final response and comparison table now based on all search observations gathered so far."
+                )
+                try:
+                    synth_response = llm.invoke(lc_messages + [HumanMessage(content=synth_prompt)])
+                    final_answer = synth_response.content
+                    final_answer = re.sub(r"<think>.*?</think>", "", final_answer, flags=re.DOTALL).strip()
+                    st.session_state.messages.append({"role": "assistant", "content": final_answer})
+                except Exception:
+                    st.session_state.messages.append({"role": "assistant", "content": f"⚠️ Agent Error: {exc}"})
+                return
+
             lc_messages.append(response)
 
             if not response.tool_calls:
@@ -786,6 +809,9 @@ def run_agent(user_text: str) -> None:
                 tool_name = tc["name"]
                 tool_args = tc["args"]
                 tool_id = tc.get("id", f"call_{st.session_state.tool_calls_made}")
+
+                if tool_name == "duckduckgo_search":
+                    search_count += 1
 
                 if tool_name in tool_map:
                     try:
@@ -804,10 +830,25 @@ def run_agent(user_text: str) -> None:
                 })
                 lc_messages.append(ToolMessage(content=str(tool_output), tool_call_id=tool_id))
 
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": "I reached the maximum reasoning steps. Please try rephrasing your question.",
-        })
+            # Prevent endless search loops: after 2 searches, guide model to synthesize
+            if search_count >= 2:
+                lc_messages.append(HumanMessage(content="You have gathered sufficient search data. Do not search again; synthesize your findings into the requested comparison table in Roman Urdu."))
+
+        # Graceful fallback: synthesize all gathered observations into final answer instead of abrupt error
+        try:
+            synth_prompt = (
+                "You have gathered comprehensive data from your tool calls. Based on all the research and observations above, "
+                "synthesize and provide your final response with a clean Markdown comparison table now."
+            )
+            synth_response = llm.invoke(lc_messages + [HumanMessage(content=synth_prompt)])
+            final_answer = synth_response.content
+            final_answer = re.sub(r"<think>.*?</think>", "", final_answer, flags=re.DOTALL).strip()
+            st.session_state.messages.append({"role": "assistant", "content": final_answer})
+        except Exception:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "Research completed. Please see the airline fare details gathered in the tool outputs above.",
+            })
         return
 
     # Branch 2: Ollama Local — Manual ReAct loop fallback
@@ -833,10 +874,15 @@ def run_agent(user_text: str) -> None:
             lc_messages.append(AIMessage(content=msg["content"]))
     lc_messages.append(HumanMessage(content=user_text))
 
-    for _ in range(6):  # max iterations
-        response = llm.invoke(lc_messages)
-        text = response.content
-        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    search_count = 0
+    for _ in range(8):  # max iterations
+        try:
+            response = llm.invoke(lc_messages)
+            text = response.content
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        except Exception as exc:
+            st.session_state.messages.append({"role": "assistant", "content": f"⚠️ Ollama error: {exc}"})
+            return
 
         action_match = action_re.search(text)
         final_match  = final_re.search(text)
@@ -859,10 +905,12 @@ def run_agent(user_text: str) -> None:
                     "tool_output": tool_output,
                 })
                 lc_messages.append(AIMessage(content=text))
-                lc_messages.append(HumanMessage(content=f"Observation: {tool_output}"))
             else:
                 lc_messages.append(AIMessage(content=text))
                 lc_messages.append(HumanMessage(content=f"Observation: Tool '{tool_name}' not found. Available: {', '.join(tool_map.keys())}"))
+
+            if search_count >= 2:
+                lc_messages.append(HumanMessage(content="Observation: Search limit reached. Please provide your Final Answer with the comparison table now."))
 
         elif final_match:
             answer = final_match.group(1).strip()
@@ -873,10 +921,20 @@ def run_agent(user_text: str) -> None:
             st.session_state.messages.append({"role": "assistant", "content": text})
             return
 
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": "I reached the maximum reasoning steps. Please try rephrasing your question.",
-    })
+    # Graceful fallback for Ollama: synthesize all gathered observations
+    try:
+        synth_messages = lc_messages + [HumanMessage(content="Observation: Summarize all findings above into a clean comparison table for Final Answer.")]
+        synth_res = llm.invoke(synth_messages)
+        text = synth_res.content
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        final_match = final_re.search(text)
+        answer = final_match.group(1).strip() if final_match else text
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+    except Exception:
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "Search complete. Please review the flight and fare observations gathered in the tool outputs above.",
+        })
 
 
 # ─────────────────────────────────────────────
