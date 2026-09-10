@@ -18,7 +18,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
-from ddgs import DDGS
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        DDGS = None
 
 # ─────────────────────────────────────────────
 #  Page configuration (must be first Streamlit call)
@@ -287,6 +293,8 @@ def duckduckgo_search(query: str) -> str:
     Returns:
         A string with the top search results including titles, URLs, and snippets.
     """
+    if DDGS is None:
+        return "Search error: duckduckgo-search package is not available."
     try:
         with DDGS() as ddgs:
             results = list(ddgs.text(query, max_results=5))
