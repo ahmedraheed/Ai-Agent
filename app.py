@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import streamlit as st
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_ollama import ChatOllama
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
@@ -745,7 +745,7 @@ render_messages()
 # ─────────────────────────────────────────────
 def run_agent(user_text: str) -> None:
     """Manual ReAct loop: parse Action/Action Input from LLM text, run tools, loop."""
-    # Obtain LLM according to provider
+    # Branch 1: Groq Cloud — First-class native tool calling (zero regex errors, zero 400 errors)
     if st.session_state.provider == "Groq Cloud":
         api_key = st.session_state.get("groq_api_key", "").strip() or os.environ.get("GROQ_API_KEY", "")
         if not api_key:
@@ -759,11 +759,59 @@ def run_agent(user_text: str) -> None:
                 "content": "⚠️ **Groq API Key missing.** Please enter your free key in the sidebar or set `GROQ_API_KEY` in `.env` / Streamlit Secrets.\n\nGet your free key here: [console.groq.com/keys](https://console.groq.com/keys)",
             })
             return
-        llm = build_groq_llm(st.session_state.groq_model, api_key)
-    else:
-        llm = build_ollama_llm(st.session_state.ollama_model)
 
-    # Regex patterns
+        llm = build_groq_llm(st.session_state.groq_model, api_key)
+        llm_with_tools = llm.bind_tools(TOOLS)
+        tool_map = {t.name: t for t in TOOLS}
+
+        lc_messages = [SystemMessage(content=REACT_SYSTEM_PROMPT)]
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                lc_messages.append(HumanMessage(content=msg["content"]))
+            elif msg["role"] == "assistant":
+                lc_messages.append(AIMessage(content=msg["content"]))
+        lc_messages.append(HumanMessage(content=user_text))
+
+        for _ in range(6):
+            response = llm_with_tools.invoke(lc_messages)
+            lc_messages.append(response)
+
+            if not response.tool_calls:
+                final_answer = response.content
+                final_answer = re.sub(r"<think>.*?</think>", "", final_answer, flags=re.DOTALL).strip()
+                st.session_state.messages.append({"role": "assistant", "content": final_answer})
+                return
+
+            for tc in response.tool_calls:
+                tool_name = tc["name"]
+                tool_args = tc["args"]
+                tool_id = tc.get("id", f"call_{st.session_state.tool_calls_made}")
+
+                if tool_name in tool_map:
+                    try:
+                        tool_output = tool_map[tool_name].invoke(tool_args)
+                    except Exception as exc:
+                        tool_output = f"Tool error: {exc}"
+                else:
+                    tool_output = f"Tool '{tool_name}' not found. Available: {', '.join(tool_map.keys())}"
+
+                st.session_state.tool_calls_made += 1
+                st.session_state.messages.append({
+                    "role": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_input": str(tool_args),
+                    "tool_output": str(tool_output),
+                })
+                lc_messages.append(ToolMessage(content=str(tool_output), tool_call_id=tool_id))
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "I reached the maximum reasoning steps. Please try rephrasing your question.",
+        })
+        return
+
+    # Branch 2: Ollama Local — Manual ReAct loop fallback
+    llm = build_ollama_llm(st.session_state.ollama_model)
     action_re  = re.compile(r"Action:\s*([\w]+).*?\nAction Input:\s*(.+?)(?=(?:\s*(?:Thought:|Action:|Final Answer:|Observation:))|$)", re.DOTALL | re.IGNORECASE)
     final_re   = re.compile(r"Final Answer:\s*(.+)", re.DOTALL | re.IGNORECASE)
 
@@ -777,7 +825,6 @@ def run_agent(user_text: str) -> None:
         "read_webpage": read_webpage,
     }
 
-    # Build message list from history + new user message
     lc_messages = [SystemMessage(content=REACT_SYSTEM_PROMPT)]
     for msg in st.session_state.messages:
         if msg["role"] == "user":
@@ -789,13 +836,11 @@ def run_agent(user_text: str) -> None:
     for _ in range(6):  # max iterations
         response = llm.invoke(lc_messages)
         text = response.content
-        # Clean think tags if present
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         action_match = action_re.search(text)
         final_match  = final_re.search(text)
 
-        # Prefer action if it appears before final answer
         if action_match and (not final_match or action_match.start() < final_match.start()):
             tool_name  = action_match.group(1).strip()
             tool_input = action_match.group(2).strip().strip('" \' `')
@@ -825,11 +870,9 @@ def run_agent(user_text: str) -> None:
             return
 
         else:
-            # No structured output — use raw response as answer
             st.session_state.messages.append({"role": "assistant", "content": text})
             return
 
-    # Reached max iterations
     st.session_state.messages.append({
         "role": "assistant",
         "content": "I reached the maximum reasoning steps. Please try rephrasing your question.",
