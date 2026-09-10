@@ -9,6 +9,11 @@ Run:
 import os
 import re
 import math
+from datetime import datetime
+import zoneinfo
+import requests
+from bs4 import BeautifulSoup
+import wikipedia
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -311,18 +316,156 @@ def duckduckgo_search(query: str) -> str:
         return f"Search error: {exc}"
 
 
-TOOLS = [duckduckgo_search, calculator]
+@tool
+def get_weather(city: str) -> str:
+    """
+    Get the live weather and temperature forecast for any city or location in the world.
+    Input should be a city name, e.g. 'Lahore', 'London', or 'New York'.
+    """
+    clean_city = city.strip().strip("'\" ")
+    try:
+        url = f"https://wttr.in/{clean_city}?format=%l:+%C+%t+(Humidity:+%h,+Wind:+%w)"
+        headers = {"User-Agent": "curl/7.68.0"}
+        resp = requests.get(url, headers=headers, timeout=6)
+        if resp.status_code == 200 and resp.text.strip():
+            return resp.text.strip()
+        return f"Could not retrieve weather for '{clean_city}'."
+    except Exception as exc:
+        return f"Weather retrieval error: {exc}"
+
+
+@tool
+def wikipedia_search(query: str) -> str:
+    """
+    Look up factual historical, scientific, or biographical information on Wikipedia.
+    Input should be a clear topic or person's name, e.g. 'Albert Einstein' or 'Artificial intelligence'.
+    """
+    clean_query = query.strip().strip("'\" ")
+    try:
+        summary = wikipedia.summary(clean_query, sentences=3, auto_suggest=True)
+        return summary
+    except wikipedia.DisambiguationError as de:
+        options = ", ".join(de.options[:5])
+        return f"Topic ambiguous. Did you mean one of these: {options}?"
+    except wikipedia.PageError:
+        return f"No Wikipedia article found for '{clean_query}'."
+    except Exception as exc:
+        return f"Wikipedia error: {exc}"
+
+
+@tool
+def convert_currency(expression: str) -> str:
+    """
+    Convert money between world currencies using real-time European Central Bank foreign exchange rates.
+    Input format: '<amount> <FROM_CURRENCY> to <TO_CURRENCY>', e.g. '100 USD to EUR' or '50 GBP to JPY'.
+    """
+    clean_expr = expression.strip().strip("'\" ")
+    match = re.search(r"([\d\.]+)\s*([A-Za-z]{3})\s*(?:to|in)\s*([A-Za-z]{3})", clean_expr, re.IGNORECASE)
+    if not match:
+        return "Invalid format. Please use: '<amount> <FROM> to <TO>', e.g. '100 USD to EUR'."
+
+    amount, from_cur, to_cur = match.group(1), match.group(2).upper(), match.group(3).upper()
+    try:
+        url = f"https://api.frankfurter.app/latest?amount={amount}&from={from_cur}&to={to_cur}"
+        resp = requests.get(url, timeout=6)
+        data = resp.json()
+        if "rates" in data and to_cur in data["rates"]:
+            converted = data["rates"][to_cur]
+            rate_date = data.get("date", "latest")
+            return f"{amount} {from_cur} = {converted} {to_cur} (Exchange rate date: {rate_date})"
+        return f"Could not convert from {from_cur} to {to_cur}."
+    except Exception as exc:
+        return f"Currency conversion error: {exc}"
+
+
+@tool
+def get_current_time(timezone_or_city: str) -> str:
+    """
+    Get the current real-world date, time, and day of the week for any city or timezone.
+    Input can be a timezone (e.g. 'UTC', 'Asia/Karachi', 'Europe/London') or a common city (e.g. 'Lahore', 'Tokyo', 'London', 'New York').
+    """
+    tz_input = timezone_or_city.strip().strip("'\" ").lower()
+    city_map = {
+        "lahore": "Asia/Karachi",
+        "karachi": "Asia/Karachi",
+        "islamabad": "Asia/Karachi",
+        "pakistan": "Asia/Karachi",
+        "london": "Europe/London",
+        "uk": "Europe/London",
+        "new york": "America/New_York",
+        "nyc": "America/New_York",
+        "california": "America/Los_Angeles",
+        "los angeles": "America/Los_Angeles",
+        "tokyo": "Asia/Tokyo",
+        "japan": "Asia/Tokyo",
+        "dubai": "Asia/Dubai",
+        "uae": "Asia/Dubai",
+        "berlin": "Europe/Berlin",
+        "germany": "Europe/Berlin",
+        "paris": "Europe/Paris",
+        "france": "Europe/Paris",
+        "sydney": "Australia/Sydney",
+        "australia": "Australia/Sydney",
+        "toronto": "America/Toronto",
+        "canada": "America/Toronto",
+        "utc": "UTC",
+        "gmt": "GMT",
+    }
+    resolved_tz = city_map.get(tz_input, timezone_or_city.strip())
+    try:
+        tz = zoneinfo.ZoneInfo(resolved_tz)
+    except Exception:
+        tz = zoneinfo.ZoneInfo("UTC")
+        resolved_tz = "UTC"
+
+    now = datetime.now(tz)
+    return now.strftime(f"Current Date & Time in {resolved_tz}: %A, %B %d, %Y - %I:%M:%S %p (%Z)")
+
+
+@tool
+def read_webpage(url: str) -> str:
+    """
+    Fetch and read the readable plain text content of any public webpage URL for analysis or summarization.
+    Input should be a complete URL (e.g. 'https://example.com').
+    """
+    clean_url = url.strip().strip("'\" ")
+    if not clean_url.startswith("http"):
+        clean_url = "https://" + clean_url
+    try:
+        resp = requests.get(clean_url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}, timeout=8)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+            tag.decompose()
+        text = " ".join(soup.stripped_strings)
+        return text[:1800] if text else "No readable text content found on this webpage."
+    except Exception as exc:
+        return f"Error reading webpage: {exc}"
+
+
+TOOLS = [
+    duckduckgo_search,
+    calculator,
+    get_weather,
+    wikipedia_search,
+    convert_currency,
+    get_current_time,
+    read_webpage,
+]
 
 
 # ─────────────────────────────────────────────
-#  Build LangGraph (cached per session)
+#  ReAct System Prompt & LLM Setup
 # ─────────────────────────────────────────────
 
-# ── ReAct system prompt (plain text — no native tool-call API needed) ──
-REACT_SYSTEM_PROMPT = """You are a helpful AI assistant with access to two tools:
+REACT_SYSTEM_PROMPT = """You are a highly capable AI assistant with access to seven specialized tools:
 
-1. duckduckgo_search  — search the web for current information
-2. calculator         — evaluate math expressions (supports +, -, *, /, **, sqrt, sin, cos, tan, log, pi, e, abs, round, factorial)
+1. duckduckgo_search — search the live web for breaking news, current information, and general queries
+2. calculator        — evaluate mathematical expressions safely (supports +, -, *, /, **, sqrt, sin, cos, tan, log, pi, e, abs, round, factorial)
+3. get_weather       — fetch real-time weather and temperature for any city in the world (e.g. Action Input: Lahore)
+4. wikipedia_search  — search Wikipedia for verified biographical, scientific, or historical summaries (e.g. Action Input: Albert Einstein)
+5. convert_currency  — convert money between currencies with live exchange rates (e.g. Action Input: 100 USD to EUR)
+6. get_current_time  — get the current live date, time, and day for any city or timezone (e.g. Action Input: Tokyo)
+7. read_webpage      — fetch and extract readable plain text content from any public webpage URL (e.g. Action Input: https://...)
 
 When you need a tool, respond EXACTLY in this format (nothing else on those lines):
 Thought: <your reasoning>
@@ -485,9 +628,16 @@ with st.sidebar:
     st.markdown(
         """
         <div class="status-card">
-            <h4>🛠 Available Tools</h4>
-            <div class="status-row"><span class="tool-badge">🔍 web_search</span></div>
-            <div class="status-row"><span class="tool-badge">🧮 calculator</span></div>
+            <h4>🛠 Available Tools (7 Total)</h4>
+            <div class="status-row" style="gap:6px; flex-wrap:wrap;">
+                <span class="tool-badge">🔍 web_search</span>
+                <span class="tool-badge">🧮 calculator</span>
+                <span class="tool-badge">🌦 weather</span>
+                <span class="tool-badge">📚 wikipedia</span>
+                <span class="tool-badge">💱 currency</span>
+                <span class="tool-badge">⏰ world_time</span>
+                <span class="tool-badge">🌐 web_reader</span>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -501,10 +651,12 @@ with st.sidebar:
         <div class="status-card" style="border-color:rgba(108,99,255,0.3);">
             <h4>💡 Try asking…</h4>
             <div style="font-size:0.82rem; color:#5a6080; line-height:1.6;">
-                • "What is 2 to the power of 32?"<br>
-                • "Search for latest news on AI agents"<br>
+                • "What is the weather in Lahore right now?"<br>
+                • "Convert 150 USD to EUR"<br>
+                • "What time and date is it in Tokyo?"<br>
+                • "Search Wikipedia for Albert Einstein"<br>
                 • "What is sqrt(7921) + 45 * 12?"<br>
-                • "Who won the 2024 ICC T20 World Cup?"
+                • "Search for the latest breakthroughs in AI"
             </div>
         </div>
         """,
@@ -618,6 +770,11 @@ def run_agent(user_text: str) -> None:
     tool_map = {
         "duckduckgo_search": duckduckgo_search,
         "calculator": calculator,
+        "get_weather": get_weather,
+        "wikipedia_search": wikipedia_search,
+        "convert_currency": convert_currency,
+        "get_current_time": get_current_time,
+        "read_webpage": read_webpage,
     }
 
     # Build message list from history + new user message
@@ -660,7 +817,7 @@ def run_agent(user_text: str) -> None:
                 lc_messages.append(HumanMessage(content=f"Observation: {tool_output}"))
             else:
                 lc_messages.append(AIMessage(content=text))
-                lc_messages.append(HumanMessage(content=f"Observation: Tool '{tool_name}' not found. Available: duckduckgo_search, calculator"))
+                lc_messages.append(HumanMessage(content=f"Observation: Tool '{tool_name}' not found. Available: {', '.join(tool_map.keys())}"))
 
         elif final_match:
             answer = final_match.group(1).strip()
