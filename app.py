@@ -1,17 +1,22 @@
 """
-AI Agent powered by Ollama (llama3) + Streamlit — manual ReAct loop.
-100% free — no paid API keys required.
+AI Agent powered by Groq (Cloud) / Ollama (Local) + Streamlit — manual ReAct loop.
+100% free — supports ultra-fast cloud inference or local offline models.
 
 Run:
     streamlit run app.py
 """
 
+import os
 import re
 import math
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from ddgs import DDGS
 
@@ -19,7 +24,7 @@ from ddgs import DDGS
 #  Page configuration (must be first Streamlit call)
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="AI Agent — LangGraph × Ollama",
+    page_title="AI Agent — ReAct × Groq & Ollama",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -325,9 +330,20 @@ Do NOT include markdown fences or extra text around the Action lines."""
 
 
 @st.cache_resource(show_spinner=False)
-def build_graph():
-    """Return a cached ChatOllama instance (no tool-binding — we do ReAct manually)."""
-    return ChatOllama(model="qwen2.5:3b", temperature=0.3)
+def build_groq_llm(model_name: str, api_key: str):
+    """Return a cached ChatGroq instance."""
+    return ChatGroq(
+        model=model_name,
+        groq_api_key=api_key,
+        temperature=0.2,
+        max_tokens=800,
+    )
+
+
+@st.cache_resource(show_spinner=False)
+def build_ollama_llm(model_name: str):
+    """Return a cached ChatOllama instance."""
+    return ChatOllama(model=model_name, temperature=0.3)
 
 
 # ─────────────────────────────────────────────
@@ -339,8 +355,12 @@ if "total_queries" not in st.session_state:
     st.session_state.total_queries = 0
 if "tool_calls_made" not in st.session_state:
     st.session_state.tool_calls_made = 0
-if "graph" not in st.session_state:
-    st.session_state.graph = None           # populated lazily after spinner
+if "provider" not in st.session_state:
+    st.session_state.provider = "Groq Cloud"
+if "groq_model" not in st.session_state:
+    st.session_state.groq_model = "openai/gpt-oss-120b"
+if "ollama_model" not in st.session_state:
+    st.session_state.ollama_model = "qwen2.5:3b"
 
 
 # ─────────────────────────────────────────────
@@ -349,10 +369,10 @@ if "graph" not in st.session_state:
 with st.sidebar:
     st.markdown(
         """
-        <div style="text-align:center; padding: 1rem 0 1.2rem;">
+        <div style="text-align:center; padding: 0.8rem 0 1rem;">
             <div style="font-size:2.8rem;">🤖</div>
-            <div style="font-size:1.1rem; font-weight:700; color:#e8eaf6;">AI Agent</div>
-            <div style="font-size:0.78rem; color:#8b92b8; margin-top:2px;">LangGraph × Ollama × llama3</div>
+            <div style="font-size:1.15rem; font-weight:700; color:#1a1d2e;">AI Agent</div>
+            <div style="font-size:0.78rem; color:#5a6080; margin-top:2px;">ReAct Loop · Groq & Ollama Dual-Engine</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -360,13 +380,70 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── Engine Selector ──
+    st.markdown("##### ⚙️ Engine Settings")
+    provider_choice = st.radio(
+        "Choose AI Engine:",
+        ["⚡ Groq Cloud (Ultra Fast)", "💻 Ollama (Local Offline)"],
+        index=0,
+        help="Groq runs on ultra-fast cloud LPUs. Ollama runs offline on your machine.",
+    )
+    is_groq = "Groq" in provider_choice
+    st.session_state.provider = "Groq Cloud" if is_groq else "Ollama Local"
+
+    if is_groq:
+        groq_models = [
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.6-27b",
+        ]
+        selected_model = st.selectbox(
+            "Groq Model:",
+            groq_models,
+            index=0,
+            help="openai/gpt-oss-120b is a massive 120B model with high accuracy.",
+        )
+        st.session_state.groq_model = selected_model
+
+        default_key = os.environ.get("GROQ_API_KEY", "")
+        # Also check st.secrets if running on Streamlit Cloud
+        if not default_key:
+            try:
+                default_key = st.secrets.get("GROQ_API_KEY", "")
+            except Exception:
+                pass
+
+        api_key_input = st.text_input(
+            "Groq API Key:",
+            value=default_key,
+            type="password",
+            help="100% Free API key from console.groq.com",
+        )
+        st.session_state.groq_api_key = api_key_input
+        if not api_key_input:
+            st.warning("⚠️ Enter a Groq API Key to proceed.")
+            st.caption("🔑 [Get a free Groq API Key](https://console.groq.com/keys)")
+    else:
+        ollama_model_input = st.text_input(
+            "Ollama Model Name:",
+            value=st.session_state.get("ollama_model", "qwen2.5:3b"),
+            help="Model pulled locally in Ollama",
+        )
+        st.session_state.ollama_model = ollama_model_input
+        st.caption("💡 Run `ollama serve` in terminal.")
+
+    st.markdown("---")
+
     # ── Status indicators ──
+    active_engine_name = "Groq Cloud" if is_groq else "Ollama Local"
+    active_model_name = st.session_state.groq_model if is_groq else st.session_state.ollama_model
+
     st.markdown(
-        """
+        f"""
         <div class="status-card">
             <h4>⚡ System Status</h4>
-            <div class="status-row"><div class="dot dot-green"></div> Ollama — llama3</div>
-            <div class="status-row"><div class="dot dot-blue"></div> LangGraph agentic loop</div>
+            <div class="status-row"><div class="dot dot-green"></div> Engine: <b>{active_engine_name}</b></div>
+            <div class="status-row"><div class="dot dot-blue"></div> Model: <code>{active_model_name}</code></div>
             <div class="status-row"><div class="dot dot-green"></div> DuckDuckGo search</div>
             <div class="status-row"><div class="dot dot-blue"></div> Math calculator</div>
         </div>
@@ -400,11 +477,11 @@ with st.sidebar:
         """
         <div class="status-card" style="border-color:rgba(108,99,255,0.3);">
             <h4>💡 Try asking…</h4>
-            <div style="font-size:0.82rem; color:#c5c8e8; line-height:1.6;">
+            <div style="font-size:0.82rem; color:#5a6080; line-height:1.6;">
                 • "What is 2 to the power of 32?"<br>
-                • "Search for the latest news on AI"<br>
-                • "What is sqrt(7921) + log(100)?"<br>
-                • "Who won the last FIFA World Cup?"
+                • "Search for latest news on AI agents"<br>
+                • "What is sqrt(7921) + 45 * 12?"<br>
+                • "Who won the 2024 ICC T20 World Cup?"
             </div>
         </div>
         """,
@@ -423,11 +500,14 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  Main chat area — header
 # ─────────────────────────────────────────────
+active_engine_name = "Groq Cloud" if st.session_state.provider == "Groq Cloud" else "Ollama Local"
+active_model_name = st.session_state.groq_model if st.session_state.provider == "Groq Cloud" else st.session_state.ollama_model
+
 st.markdown(
-    """
+    f"""
     <div class="chat-header">
         <h1>🤖 AI Agent</h1>
-        <p>Powered by LangGraph · llama3 via Ollama · DuckDuckGo · 100% free</p>
+        <p>Powered by ReAct Agent · {active_engine_name} ({active_model_name}) · DuckDuckGo · 100% Free</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -436,23 +516,22 @@ st.markdown(
 # Welcome message when chat is empty
 if not st.session_state.messages:
     st.markdown(
-        """
+        f"""
         <div style="
-            background: linear-gradient(135deg, rgba(108,99,255,0.1), rgba(0,212,170,0.06));
-            border: 1px solid rgba(108,99,255,0.2);
+            background: linear-gradient(135deg, rgba(108,99,255,0.06), rgba(0,212,170,0.04));
+            border: 1px solid rgba(108,99,255,0.18);
             border-radius: 14px;
             padding: 1.5rem 1.8rem;
             margin-bottom: 1.5rem;
             text-align: center;
         ">
             <div style="font-size:2rem; margin-bottom:0.6rem;">👋</div>
-            <div style="font-size:1rem; font-weight:600; color:#e8eaf6; margin-bottom:0.4rem;">
+            <div style="font-size:1rem; font-weight:600; color:#1a1d2e; margin-bottom:0.4rem;">
                 Welcome! Ask me anything.
             </div>
-            <div style="font-size:0.85rem; color:#8b92b8;">
+            <div style="font-size:0.85rem; color:#5a6080;">
                 I can search the web or calculate math expressions autonomously.<br>
-                Make sure <strong style="color:#6c63ff;">Ollama</strong> is running locally
-                with <code style="background:rgba(255,255,255,0.08); padding:1px 6px; border-radius:4px;">ollama pull qwen2.5:3b</code>.
+                Currently active: <strong style="color:#6c63ff;">{active_engine_name}</strong> (<code style="background:rgba(0,0,0,0.05); padding:1px 6px; border-radius:4px;">{active_model_name}</code>).
             </div>
         </div>
         """,
@@ -491,13 +570,26 @@ render_messages()
 # ─────────────────────────────────────────────
 def run_agent(user_text: str) -> None:
     """Manual ReAct loop: parse Action/Action Input from LLM text, run tools, loop."""
-    if st.session_state.graph is None:
-        st.session_state.graph = build_graph()
-
-    llm = st.session_state.graph
+    # Obtain LLM according to provider
+    if st.session_state.provider == "Groq Cloud":
+        api_key = st.session_state.get("groq_api_key", "").strip() or os.environ.get("GROQ_API_KEY", "")
+        if not api_key:
+            try:
+                api_key = st.secrets.get("GROQ_API_KEY", "")
+            except Exception:
+                pass
+        if not api_key:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "⚠️ **Groq API Key missing.** Please enter your free key in the sidebar or set `GROQ_API_KEY` in `.env` / Streamlit Secrets.\n\nGet your free key here: [console.groq.com/keys](https://console.groq.com/keys)",
+            })
+            return
+        llm = build_groq_llm(st.session_state.groq_model, api_key)
+    else:
+        llm = build_ollama_llm(st.session_state.ollama_model)
 
     # Regex patterns
-    action_re  = re.compile(r"Action:\s*([\w]+).*?\nAction Input:\s*(.+?)(?=\nThought:|\nAction:|\nFinal Answer:|\nObservation:|$)", re.DOTALL | re.IGNORECASE)
+    action_re  = re.compile(r"Action:\s*([\w]+).*?\nAction Input:\s*(.+?)(?=(?:\s*(?:Thought:|Action:|Final Answer:|Observation:))|$)", re.DOTALL | re.IGNORECASE)
     final_re   = re.compile(r"Final Answer:\s*(.+)", re.DOTALL | re.IGNORECASE)
 
     tool_map = {
@@ -516,7 +608,9 @@ def run_agent(user_text: str) -> None:
 
     for _ in range(6):  # max iterations
         response = llm.invoke(lc_messages)
-        text = response.content.strip()
+        text = response.content
+        # Clean think tags if present
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         action_match = action_re.search(text)
         final_match  = final_re.search(text)
@@ -580,11 +674,17 @@ if prompt := st.chat_input("Ask me anything — I can search the web or do math�
             try:
                 run_agent(prompt)
             except Exception as exc:
-                error_msg = (
-                    f"⚠️ **Agent error:** `{exc}`\n\n"
-                    "Make sure **Ollama** is running (`ollama serve`) and "
-                    "**llama3** is pulled (`ollama pull llama3`)."
-                )
+                if st.session_state.get("provider") == "Groq Cloud":
+                    error_msg = (
+                        f"⚠️ **Groq API Error:** `{exc}`\n\n"
+                        "Please verify your **Groq API Key** in the sidebar or check if your free rate limit was exceeded."
+                    )
+                else:
+                    error_msg = (
+                        f"⚠️ **Ollama Error:** `{exc}`\n\n"
+                        "Make sure **Ollama** is running (`ollama serve`) and "
+                        f"the model is pulled (`ollama pull {st.session_state.get('ollama_model', 'qwen2.5:3b')}`)."
+                    )
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": error_msg,
@@ -592,3 +692,4 @@ if prompt := st.chat_input("Ask me anything — I can search the web or do math�
 
     # 4. Rerun to re-render full conversation cleanly
     st.rerun()
+

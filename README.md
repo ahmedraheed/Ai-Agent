@@ -1,6 +1,6 @@
-# 🤖 Autonomous AI Agent — Streamlit × Ollama × ReAct
+# 🤖 Autonomous AI Agent — Streamlit × Groq Cloud × Ollama × ReAct
 
-An autonomous, **100% free and open-source** AI Agent web application built with **Streamlit**, **Ollama**, and **LangChain**. It features an autonomous ReAct (Reasoning + Acting) loop with real-time web search and mathematical reasoning capabilities — **no paid API keys required**.
+An autonomous, **100% free and open-source** AI Agent web application built with **Streamlit**, **Groq Cloud**, **Ollama**, and **LangChain**. It features an autonomous ReAct (Reasoning + Acting) loop with real-time web search and mathematical reasoning capabilities — supporting both **ultra-fast cloud inference (Groq)** and **offline local inference (Ollama)**.
 
 ---
 
@@ -18,16 +18,20 @@ Live information retrieval using DuckDuckGo:
 
 ## ✨ Features
 
-- 🆓 **100% Free & Local:** Powered by **Ollama** (`qwen2.5:3b` or `llama3`) running locally on your hardware. Zero API costs, zero subscriptions.
+- ⚡ **Dual AI Engines:**
+  - **Groq Cloud (Default):** Lightning-fast inference on LPUs using massive models (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.6-27b`). 100% free tier (up to 14,400 requests/day).
+  - **Ollama Local:** Run 100% offline on your own machine (`qwen2.5:3b`, `llama3`). Zero internet required.
 - 🔄 **Autonomous ReAct Agent Loop:** Implements multi-step reasoning (`Thought` ➔ `Action` ➔ `Observation` ➔ `Final Answer`).
 - 🛠️ **Integrated Tools:**
   - **🔍 DuckDuckGo Search:** Live internet queries without requiring any search API keys.
   - **🧮 Safe Math Calculator:** Evaluates mathematical expressions safely using Python's standard `math` module (supports trigonometry, log, powers, factorial, square roots, constants $\pi$, $e$).
 - 🎨 **Modern & Responsive UI:**
   - Clean light interface with custom CSS.
+  - Sidebar engine switcher & live status monitors.
   - Collapsible interactive tool inspection expanders.
   - Real-time metrics tracking total queries and tool calls executed.
   - One-click session reset / chat history purge.
+- ☁️ **Cloud Deployment Ready:** Ready to deploy 24/7 on **Streamlit Community Cloud** with 1-click.
 
 ---
 
@@ -35,7 +39,7 @@ Live information retrieval using DuckDuckGo:
 
 ```mermaid
 flowchart TD
-    A[👤 User Prompt] --> B[🤖 LLM / Ollama Agent]
+    A[👤 User Prompt] --> B[⚙️ Engine: Groq Cloud or Ollama Local]
     B --> C{Tool Required?}
     C -- "Yes (Web Search)" --> D[🔍 DuckDuckGo Search]
     C -- "Yes (Calculation)" --> E[🧮 Math Calculator]
@@ -53,36 +57,17 @@ flowchart TD
 | Layer | Technology | Description |
 |---|---|---|
 | **Frontend / Web App** | [Streamlit](https://streamlit.io/) | Modern reactive web UI |
-| **Local LLM Engine** | [Ollama](https://ollama.com/) | High-performance local model inference |
-| **Model** | `qwen2.5:3b` / `llama3` | Fast, lightweight models supporting tool use |
-| **Agent Orchestration** | [LangChain](https://www.langchain.com/) | Message handling & tool structure |
+| **Cloud LLM Engine** | [Groq Cloud](https://groq.com/) | Ultra-low latency LPU inference (100% Free) |
+| **Local LLM Engine** | [Ollama](https://ollama.com/) | Offline local model inference |
+| **Agent Orchestration** | [LangChain](https://www.langchain.com/) | Message handling, prompt engineering & tool schemas |
 | **Web Search** | `ddgs` (DuckDuckGo) | Free, rate-limit friendly search engine |
 | **Language** | Python 3.10+ | Core application logic |
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Local)
 
-### 1. Prerequisites
-
-Make sure you have **Python 3.10+** and **Ollama** installed on your system.
-
-- Download Ollama: [ollama.com/download](https://ollama.com/download)
-
-### 2. Pull the Local Model
-
-In your terminal, pull the recommended model (`qwen2.5:3b` or `llama3`):
-
-```bash
-ollama pull qwen2.5:3b
-```
-
-Ensure Ollama is running:
-```bash
-ollama serve
-```
-
-### 3. Clone Repository & Install Dependencies
+### 1. Clone Repository & Install Dependencies
 
 ```bash
 # Clone repository
@@ -93,17 +78,38 @@ cd Ai-Agent
 pip install -r requirements.txt
 ```
 
-### 4. Launch the Application
+### 2. Configure Environment (Optional for Groq)
+
+Create a `.env` file in the root folder (or enter your key directly in the sidebar):
+
+```env
+GROQ_API_KEY=your_free_groq_api_key_here
+```
+> 💡 Get a free Groq API key in 30 seconds at [console.groq.com/keys](https://console.groq.com/keys) (No credit card needed).
+
+### 3. Launch the Application
 
 ```bash
 streamlit run app.py
 ```
 
-Open your browser and navigate to:
-```
-http://localhost:8501
-```
-*(or `http://localhost:8502` if port 8501 is busy)*
+Open your browser and navigate to: `http://localhost:8501` (or `http://localhost:8502`).
+
+---
+
+## ☁️ Deploy to Streamlit Cloud (24/7 Free Hosting)
+
+1. Fork or push this repository to your GitHub account.
+2. Visit **[share.streamlit.io](https://share.streamlit.io/)** and sign in with GitHub.
+3. Click **"New app"** and select:
+   - **Repository:** `ahmedraheed/Ai-Agent`
+   - **Branch:** `main`
+   - **Main file path:** `app.py`
+4. Expand **Advanced settings** ➔ **Secrets**, and paste:
+   ```toml
+   GROQ_API_KEY = "your_free_groq_api_key_here"
+   ```
+5. Click **Deploy!** — Your AI Agent is now live on the internet! 🚀
 
 ---
 
@@ -114,9 +120,10 @@ Ai-Agent/
 ├── assets/
 │   ├── demo-calculator.png    # Screenshot showing math calculator tool
 │   └── demo-search.png        # Screenshot showing web search tool
-├── .gitignore                 # Ignored files (virtual environments, caches)
+├── .env.example               # Template for environment variables
+├── .gitignore                 # Protected secrets (.env) & temporary files
 ├── app.py                     # Main Streamlit & AI Agent application
-├── README.md                  # Project documentation
+├── README.md                  # Project documentation & deployment guide
 └── requirements.txt           # Python dependencies
 ```
 
