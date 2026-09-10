@@ -2,17 +2,27 @@
 
 An autonomous, **100% free and open-source** AI Agent web application built with **Streamlit**, **Groq Cloud**, **Ollama**, and **LangChain**. It features an autonomous ReAct (Reasoning + Acting) loop with real-time web search and mathematical reasoning capabilities — supporting both **ultra-fast cloud inference (Groq)** and **offline local inference (Ollama)**.
 
+> 🌐 **Live Demo:** [ai-agent-pro.streamlit.app](https://ai-agent-pro.streamlit.app/)
+
 ---
 
 ## 📸 Screenshots & Demos
 
+### 🌐 Live Cloud Web Application
+Deployed 24/7 on Streamlit Cloud with dual-engine switching and secure backend integration:
+![AI Agent Live Home](assets/live-cloud-home.png)
+
+### 🔍 Real-Time Information Retrieval & Formatting
+Live autonomous web search answering questions with structured markdown tables:
+![AI Agent Live Search](assets/live-cloud-chat.png)
+
+### ⚡ Real-Time System Status & Engine Monitoring
+Sidebar system status monitor showing active provider, model, and tool usage counters:
+![AI Agent System Status](assets/live-cloud-sidebar.png)
+
 ### 🧮 Math Calculator in Action
 Autonomous tool invocation for safe mathematical calculations:
 ![Math Calculator Tool](assets/demo-calculator.png)
-
-### 🔍 Real-Time DuckDuckGo Web Search
-Live information retrieval using DuckDuckGo:
-![Web Search Tool](assets/demo-search.png)
 
 ---
 
@@ -118,13 +128,16 @@ Open your browser and navigate to: `http://localhost:8501` (or `http://localhost
 ```text
 Ai-Agent/
 ├── assets/
-│   ├── demo-calculator.png    # Screenshot showing math calculator tool
-│   └── demo-search.png        # Screenshot showing web search tool
-├── .env.example               # Template for environment variables
-├── .gitignore                 # Protected secrets (.env) & temporary files
-├── app.py                     # Main Streamlit & AI Agent application
-├── README.md                  # Project documentation & deployment guide
-└── requirements.txt           # Python dependencies
+│   ├── live-cloud-home.png     # Screenshot of live deployed cloud home screen
+│   ├── live-cloud-chat.png     # Screenshot of live web search in table format
+│   ├── live-cloud-sidebar.png  # Screenshot of live system status & metrics
+│   ├── demo-calculator.png     # Screenshot showing math calculator tool
+│   └── demo-search.png         # Screenshot showing local web search tool
+├── .env.example                # Template for environment variables
+├── .gitignore                  # Protected secrets (.env) & temporary files
+├── app.py                      # Main Streamlit & AI Agent application
+├── README.md                   # Project documentation & deployment guide
+└── requirements.txt            # Python dependencies
 ```
 
 ---
