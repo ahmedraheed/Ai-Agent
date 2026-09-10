@@ -413,24 +413,39 @@ with st.sidebar:
         )
         st.session_state.groq_model = selected_model
 
-        default_key = os.environ.get("GROQ_API_KEY", "")
-        # Also check st.secrets if running on Streamlit Cloud
-        if not default_key:
+        # Secure backend resolution: never expose secret key value in HTML
+        server_key = os.environ.get("GROQ_API_KEY", "")
+        if not server_key:
             try:
-                default_key = st.secrets.get("GROQ_API_KEY", "")
+                server_key = st.secrets.get("GROQ_API_KEY", "")
             except Exception:
                 pass
 
-        api_key_input = st.text_input(
-            "Groq API Key:",
-            value=default_key,
-            type="password",
-            help="100% Free API key from console.groq.com",
-        )
-        st.session_state.groq_api_key = api_key_input
-        if not api_key_input:
-            st.warning("⚠️ Enter a Groq API Key to proceed.")
-            st.caption("🔑 [Get a free Groq API Key](https://console.groq.com/keys)")
+        if server_key:
+            st.session_state.groq_api_key = server_key
+            st.success("🟢 Connected & Secured", icon="🛡️")
+            with st.expander("⚙️ Use Custom API Key (Optional)", expanded=False):
+                custom_key = st.text_input(
+                    "Custom Key:",
+                    value="",
+                    type="password",
+                    placeholder="gsk_...",
+                    help="Only needed if you want to test your own personal key.",
+                )
+                if custom_key.strip():
+                    st.session_state.groq_api_key = custom_key.strip()
+        else:
+            api_key_input = st.text_input(
+                "Groq API Key:",
+                value="",
+                type="password",
+                placeholder="gsk_...",
+                help="100% Free API key from console.groq.com",
+            )
+            st.session_state.groq_api_key = api_key_input.strip()
+            if not api_key_input:
+                st.warning("⚠️ Enter a Groq API Key to proceed.")
+                st.caption("🔑 [Get a free Groq API Key](https://console.groq.com/keys)")
     else:
         ollama_model_input = st.text_input(
             "Ollama Model Name:",
